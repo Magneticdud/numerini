@@ -2,6 +2,8 @@
 
 Queue management system for small shops — open source, self-hosted, runs on Linux.
 
+> 🇮🇹 [Leggi il README in italiano](README.it.md)
+
 **License:** GPL-3.0  
 **AI disclosure:** This project was built with Claude Code (Claude AI). AI-assisted development is embraced openly.
 
