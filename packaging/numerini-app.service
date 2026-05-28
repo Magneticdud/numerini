@@ -1,0 +1,18 @@
+[Unit]
+Description=Numerini Queue Management — Electron App
+After=graphical-session.target
+Wants=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/numerini
+Restart=always
+RestartSec=5
+Environment=DISPLAY=:0
+Environment=ELECTRON_OZONE_PLATFORM_HINT=x11
+Environment=HOME=%h
+StandardOutput=append:%h/.config/numerini/logs/app.log
+StandardError=append:%h/.config/numerini/logs/app.log
+
+[Install]
+WantedBy=graphical-session.target

@@ -1,0 +1,13 @@
+[Unit]
+Description=Numerini — Cloudflare Tunnel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/cloudflared tunnel run --token %i
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,26 @@
+{
+  "kiosk": {
+    "tap_to_start": "Tocca per iniziare",
+    "select_service": "Seleziona il servizio",
+    "back": "← Indietro",
+    "in_attesa": "in attesa",
+    "waiting_single": "persona prima di te",
+    "waiting_plural": "persone prima di te",
+    "print_ticket_msg": "Prendi il tuo scontrino",
+    "tap_to_continue": "Tocca per continuare",
+    "printer_unavailable": "Stampante non disponibile. Riprova.",
+    "checking": "Verifica in corso...",
+    "order_number_prompt": "Inserisci il tuo numero ordine:",
+    "confirm": "Conferma",
+    "order_not_ready_advisory": "Il sistema non ha ancora aggiornato il tuo ordine. Verifica al bancone.",
+    "estimated_wait": "~{{min}} min",
+    "queue_label": "Coda:"
+  },
+  "display": {
+    "waiting_open": "In attesa di apertura"
+  },
+  "errors": {
+    "printer_unavailable": "Stampante non disponibile",
+    "empty_queue": "Nessun cliente in attesa"
+  }
+}

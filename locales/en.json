@@ -1,0 +1,26 @@
+{
+  "kiosk": {
+    "tap_to_start": "Tap to start",
+    "select_service": "Select service",
+    "back": "← Back",
+    "in_attesa": "waiting",
+    "waiting_single": "person ahead of you",
+    "waiting_plural": "people ahead of you",
+    "print_ticket_msg": "Take your receipt",
+    "tap_to_continue": "Tap to continue",
+    "printer_unavailable": "Printer unavailable. Please try again.",
+    "checking": "Checking...",
+    "order_number_prompt": "Enter your order number:",
+    "confirm": "Confirm",
+    "order_not_ready_advisory": "The system has not yet updated your order. Please check at the counter.",
+    "estimated_wait": "~{{min}} min",
+    "queue_label": "Queue:"
+  },
+  "display": {
+    "waiting_open": "Waiting for opening"
+  },
+  "errors": {
+    "printer_unavailable": "Printer unavailable",
+    "empty_queue": "No customers waiting"
+  }
+}

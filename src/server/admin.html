@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Numerini — Admin</title>
+<style>
+:root {
+  --bg: #111; --bg2: #1a1a1a; --text: #fff; --muted: #a0aec0;
+  --brand: #3182ce; --error: #e53e3e; --success: #38a169; --warn: #d69e2e;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg); color: var(--text); font-family: Inter, system-ui, sans-serif; min-height: 100vh; }
+header { background: var(--bg2); padding: 1rem 1.5rem; border-bottom: 1px solid #222; display: flex; justify-content: space-between; align-items: center; }
+header h1 { font-size: 1.3rem; font-weight: 700; }
+.status-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--success); display: inline-block; margin-right: 0.5rem; }
+#main { padding: 1.5rem; max-width: 600px; margin: 0 auto; }
+.queue-card { background: var(--bg2); border-radius: 1rem; padding: 1.25rem; margin-bottom: 1rem; border: 1px solid #222; }
+.queue-name { font-size: 1.2rem; font-weight: 600; margin-bottom: 0.5rem; }
+.queue-info { color: var(--muted); font-size: 0.9rem; margin-bottom: 1rem; }
+.btn-row { display: flex; gap: 0.75rem; flex-wrap: wrap; }
+button { padding: 0.65rem 1.25rem; border-radius: 0.5rem; border: none; font-size: 0.95rem; font-weight: 600; cursor: pointer; min-height: 44px; transition: opacity 0.15s; }
+button:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-primary { background: var(--brand); color: #fff; }
+.btn-danger  { background: #2d3748; color: var(--error); border: 1px solid var(--error); }
+.last-num { font-family: 'Barlow Condensed', sans-serif; font-size: 2.5rem; font-weight: 800; color: var(--brand); }
+#toast { position: fixed; bottom: 1.5rem; left: 50%; transform: translateX(-50%); background: var(--bg2); border: 1px solid #333; padding: 0.75rem 1.5rem; border-radius: 0.5rem; display: none; z-index: 100; }
+#auth-screen { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 80vh; gap: 1rem; }
+#auth-screen input { background: var(--bg2); border: 1px solid #333; color: var(--text); padding: 0.75rem 1rem; border-radius: 0.5rem; font-size: 1rem; width: 320px; }
+#ws-status { font-size: 0.8rem; color: var(--muted); }
+</style>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@800&display=swap" rel="stylesheet">
+</head>
+<body>
+<div id="app">
+  <div id="auth-screen">
+    <h2 style="font-size:1.5rem">Accesso Admin</h2>
+    <input type="password" id="token-input" placeholder="Incolla il token admin" autocomplete="off">
+    <button class="btn-primary" onclick="login()">Accedi</button>
+    <p id="auth-err" style="color:var(--error);display:none">Token non valido</p>
+  </div>
+</div>
+<div id="toast"></div>
+
+<script>
+let TOKEN = localStorage.getItem('numerini_token') || '';
+let ws = null;
+let queues = [];
+
+function login() {
+  TOKEN = document.getElementById('token-input').value.trim();
+  if (!TOKEN) return;
+  fetch('/api/status').then(r => r.json()).then(data => {
+    localStorage.setItem('numerini_token', TOKEN);
+    loadAdmin();
+  }).catch(() => {
+    document.getElementById('auth-err').style.display = '';
+  });
+}
+
+function loadAdmin() {
+  document.getElementById('app').innerHTML = `
+    <header>
+      <h1>Numerini Admin</h1>
+      <span id="ws-status"><span class="status-dot"></span>In linea</span>
+    </header>
+    <div id="main"><p style="color:var(--muted)">Caricamento...</p></div>
+  `;
+  fetchQueues();
+  connectWs();
+}
+
+async function fetchQueues() {
+  const r = await fetch('/api/queues');
+  queues = await r.json();
+  renderQueues();
+}
+
+function renderQueues() {
+  const el = document.getElementById('main');
+  if (!queues.length) { el.innerHTML = '<p style="color:var(--muted);text-align:center;padding:3rem">Nessuna coda configurata</p>'; return; }
+  el.innerHTML = queues.map(q => `
+    <div class="queue-card" id="q${q.id}">
+      <div class="queue-name">${q.name}</div>
+      <div class="queue-info">${q.waiting ?? 0} in attesa</div>
+      <div class="last-num">${q.lastCalled ? String(q.lastCalled).padStart(3,'0') : '—'}</div>
+      <div class="btn-row" style="margin-top:1rem">
+        <button class="btn-primary" onclick="callNext(${q.id})" ${!q.waiting ? 'disabled' : ''}>Chiama successivo</button>
+        <button class="btn-danger" onclick="confirmReset(${q.id}, '${q.name}')">Reset</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+async function callNext(queueId) {
+  const r = await fetch(`/api/queues/${queueId}/next`, { method: 'POST', headers: { Authorization: `Bearer ${TOKEN}` } });
+  const data = await r.json();
+  if (r.status === 409) { toast('Nessun cliente in attesa'); return; }
+  if (!r.ok) { toast('Errore: ' + (data.error || r.status)); return; }
+  toast(`Chiamato numero ${String(data.number).padStart(3,'0')}`);
+}
+
+function confirmReset(queueId, name) {
+  if (!confirm(`Reset coda "${name}"? Tutti i numeri verranno azzerati.`)) return;
+  fetch(`/api/queues/${queueId}/reset`, { method: 'POST', headers: { Authorization: `Bearer ${TOKEN}` } })
+    .then(() => toast('Coda resettata'));
+}
+
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg; el.style.display = 'block';
+  setTimeout(() => { el.style.display = 'none'; }, 3000);
+}
+
+function connectWs() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}/ws?role=admin&token=${TOKEN}`);
+  ws.onmessage = (e) => {
+    const ev = JSON.parse(e.data);
+    if (ev.type === 'queue_state') {
+      const q = queues.find(q => q.id === ev.queueId);
+      if (q) { q.lastCalled = ev.current; q.waiting = ev.waiting; renderQueues(); }
+    } else if (ev.type === 'reset') {
+      const q = queues.find(q => q.id === ev.queueId);
+      if (q) { q.lastCalled = 0; q.waiting = 0; renderQueues(); }
+    }
+  };
+  ws.onclose = () => {
+    document.getElementById('ws-status').innerHTML = '<span class="status-dot" style="background:var(--error)"></span>Disconnesso';
+    setTimeout(connectWs, 3000);
+  };
+}
+
+// Auto-login if token saved
+if (TOKEN) { loadAdmin(); }
+</script>
+</body>
+</html>

@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Numerini — Il tuo numero</title>
+<style>
+:root { --brand: #3182ce; --bg: #111; --text: #fff; --muted: #a0aec0; --warn: #d69e2e; --success: #38a169; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg); color: var(--text); font-family: Inter, system-ui, sans-serif; min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 2rem; text-align: center; }
+.number { font-family: 'Barlow Condensed', sans-serif; font-weight: 800; font-size: clamp(5rem, 30vw, 10rem); color: var(--brand); line-height: 1; margin: 1.5rem 0; }
+.queue-name { font-size: 1.1rem; color: var(--muted); margin-bottom: 0.5rem; }
+.position { font-size: 1.3rem; margin: 0.5rem 0; }
+.eta { color: var(--muted); font-size: 1rem; }
+.status-called { background: var(--success); color: #fff; padding: 1.5rem; border-radius: 1rem; margin-top: 1rem; font-size: 1.2rem; font-weight: 600; }
+.status-done { background: #2d3748; padding: 1.5rem; border-radius: 1rem; margin-top: 1rem; font-size: 1rem; color: var(--muted); }
+#loading { color: var(--muted); font-size: 1.1rem; }
+</style>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@800&display=swap" rel="stylesheet">
+</head>
+<body>
+<p id="loading">Caricamento...</p>
+<div id="content" style="display:none; width:100%; max-width:400px">
+  <p class="queue-name" id="queue-name"></p>
+  <p style="color:var(--muted);font-size:0.9rem">Il tuo numero</p>
+  <div class="number" id="number"></div>
+  <div id="status-area"></div>
+</div>
+
+<script>
+const ticketId = parseInt(location.pathname.split('/').pop() || '0');
+let ws;
+
+async function init() {
+  const r = await fetch(`/api/ticket/${ticketId}/status`);
+  if (!r.ok) {
+    document.getElementById('loading').textContent = 'Numero non trovato.';
+    return;
+  }
+  const data = await r.json();
+  document.getElementById('loading').style.display = 'none';
+  document.getElementById('content').style.display = '';
+  document.getElementById('number').textContent = String(data.number).padStart(3, '0');
+  updateStatus(data);
+  connectWs();
+}
+
+function updateStatus({ status, position, eta }) {
+  const el = document.getElementById('status-area');
+  if (status === 'called') {
+    el.innerHTML = `<div class="status-called">🔔 Il tuo numero è stato chiamato!<br>Presentati allo sportello.</div>`;
+  } else if (status === 'done') {
+    el.innerHTML = `<div class="status-done">Il tuo numero è già stato chiamato.<br>Presentati allo sportello.</div>`;
+  } else {
+    const etaText = eta != null ? `~${Math.ceil(eta / 60)} min` : 'calcolo in corso...';
+    el.innerHTML = `
+      <p class="position">${position === 0 ? 'Sei il prossimo!' : `${position} ${position === 1 ? 'persona' : 'persone'} prima di te`}</p>
+      <p class="eta">Attesa stimata: ${etaText}</p>
+    `;
+  }
+}
+
+function connectWs() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}/ws?role=wait&ticketId=${ticketId}`);
+  ws.onmessage = (e) => {
+    const ev = JSON.parse(e.data);
+    if (ev.type === 'ticket_status') updateStatus(ev);
+    if (ev.type === 'call') {
+      // Refresh our own status
+      fetch(`/api/ticket/${ticketId}/status`).then(r => r.json()).then(updateStatus);
+    }
+  };
+  ws.onclose = () => setTimeout(connectWs, 3000);
+}
+
+init();
+</script>
+</body>
+</html>
