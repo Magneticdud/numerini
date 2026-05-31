@@ -181,6 +181,8 @@ La pagina di attesa `/wait/:id` è raggiungibile da internet tramite Cloudflare 
 - Le API mutanti richiedono il bearer token (mostrato nella procedura guidata)
 - `order_check_url` accetta qualsiasi URL, inclusi IP locali per ERP aziendali — documentato nel README come comportamento atteso; richiede accesso fisico alla macchina per modificare
 - Il sistema è progettato per reti LAN fidate. Per reti con dispositivi non fidati, usa regole firewall per limitare la porta 8080
+- `/admin` e `/wait/:ticketId` sono limitati a 60 richieste al minuto per IP, per proteggere il server locale da richieste eccessive.
+- La pagina di attesa (`wait.html`) usa `textContent` (non `innerHTML`) per mostrare posizione in coda e tempo stimato, prevenendo XSS tramite valori forniti dal server.
 
 ## Contribuire
 

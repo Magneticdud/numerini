@@ -93,10 +93,15 @@ function updateStatus({ status, position, eta }) {
     el.innerHTML = `<div class="status-transferred"><h3>Numero trasferito</h3><p>Aggiornamento in corso...</p></div>`;
   } else {
     const etaText = eta != null ? `~${Math.ceil(eta / 60)} min` : 'calcolo in corso...';
-    el.innerHTML = `
-      <p class="position">${position === 0 ? 'Sei il prossimo!' : `${position} ${position === 1 ? 'persona' : 'persone'} prima di te`}</p>
-      <p class="eta">Attesa stimata: ${etaText}</p>
-    `;
+    el.innerHTML = '';
+    const posEl = document.createElement('p');
+    posEl.className = 'position';
+    posEl.textContent = position === 0 ? 'Sei il prossimo!' : `${position} ${position === 1 ? 'persona' : 'persone'} prima di te`;
+    const etaEl = document.createElement('p');
+    etaEl.className = 'eta';
+    etaEl.textContent = `Attesa stimata: ${etaText}`;
+    el.appendChild(posEl);
+    el.appendChild(etaEl);
   }
 }
 
