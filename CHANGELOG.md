@@ -3,6 +3,13 @@
 All notable changes to Numerini are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.2.0.2] - 2026-05-31
+
+### Fixed
+
+- **XSS in wait page** — the queue position and ETA display in `/wait/:ticketId` now uses `textContent` instead of `innerHTML`, preventing server-supplied values from being interpreted as HTML. Addresses GitHub CodeQL alert #2 (CWE-79).
+- **Missing rate limiting on page routes** — `/admin` and `/wait/:ticketId` are now capped at 60 requests per minute per IP, protecting the local server from request flooding. Addresses GitHub CodeQL alerts #3 and #4 (CWE-307, CWE-400).
+
 ## [0.2.0.1] - 2026-05-31
 
 ### Fixed

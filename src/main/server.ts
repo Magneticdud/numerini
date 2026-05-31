@@ -4,6 +4,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import path from 'path';
 import fs from 'fs';
 import qrcode from 'qrcode';
+import rateLimit from 'express-rate-limit';
 import type { Config } from './config';
 import { logError } from './config';
 import {
@@ -47,16 +48,18 @@ export function createExpressApp(config: Config, tunnelUrl?: string): ReturnType
 
   const auth = authMiddleware(config.adminToken);
 
+  const pageRateLimit = rateLimit({ windowMs: 60_000, max: 60, standardHeaders: true, legacyHeaders: false });
+
   // ── Static HTML pages ──────────────────────────────────────────────────────
 
-  app.get('/admin', (_req, res) => {
+  app.get('/admin', pageRateLimit, (_req, res) => {
     if (!isBusinessHours(config)) {
       return res.sendFile(path.join(SERVER_HTML, 'siamo-chiusi.html'));
     }
     res.sendFile(path.join(SERVER_HTML, 'admin.html'));
   });
 
-  app.get('/wait/:ticketId', (req, res) => {
+  app.get('/wait/:ticketId', pageRateLimit, (req, res) => {
     if (!isBusinessHours(config)) {
       return res.sendFile(path.join(SERVER_HTML, 'siamo-chiusi.html'));
     }
