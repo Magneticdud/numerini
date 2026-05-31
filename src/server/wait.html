@@ -102,7 +102,9 @@ function updateStatus({ status, position, eta }) {
 
 // Show transfer notice with new number and auto-redirect countdown.
 function showTransferred(newTicketId, newNumber, newSuffix) {
-  clearTimeout(autoRedirectTimer);
+  // Cancel any previous countdown before starting a new one.
+  // Must use clearInterval (not clearTimeout) since autoRedirectTimer holds a setInterval ID.
+  clearInterval(autoRedirectTimer);
   document.getElementById('loading').style.display = 'none';
   document.getElementById('content').style.display = '';
 
@@ -119,20 +121,21 @@ function showTransferred(newTicketId, newNumber, newSuffix) {
       <p class="countdown" id="countdown">Redirect automatico in 5 secondi...</p>
     </div>
   `;
-
+  // Use DOM APIs instead of innerHTML interpolation to prevent XSS
   const numberEl = document.getElementById('new-number');
   if (numberEl) numberEl.textContent = label;
   const linkEl = document.getElementById('new-ticket-link');
   if (linkEl) linkEl.setAttribute('href', `/wait/${safeTicketId}`);
 
-  // Auto-redirect after 5 seconds
+  // Auto-redirect after 5 seconds.
+  // Stored in autoRedirectTimer so clearInterval above can cancel a stale one.
   let secs = 5;
-  const tick = setInterval(() => {
+  autoRedirectTimer = setInterval(() => {
     secs--;
     const el = document.getElementById('countdown');
     if (el) el.textContent = `Redirect automatico in ${secs} second${secs === 1 ? 'o' : 'i'}...`;
     if (secs <= 0) {
-      clearInterval(tick);
+      clearInterval(autoRedirectTimer);
       location.replace(`/wait/${safeTicketId}`);
     }
   }, 1000);
