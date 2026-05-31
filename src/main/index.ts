@@ -60,7 +60,7 @@ async function main(): Promise<void> {
       printTicket(config.printerPath, {
         shopName: 'Il Negozio',
         queueName: queue?.name ?? 'Coda',
-        number: ticket.number,
+        ticketLabel: String(ticket.number).padStart(3, '0'),
       }).catch(err => logError(`Print error: ${err.message}`));
 
       return { ok: true, ticket };
@@ -72,19 +72,19 @@ async function main(): Promise<void> {
 
   ipcMain.handle('call-next', async (_event, queueId: number) => {
     try {
-      const number = callNext(queueId, 'operator');
+      const ticket = callNext(queueId, 'operator');
       const status = getQueueStatus();
       const qs = status.find(s => s.queue.id === queueId);
       const queue = config.queues.find(q => q.id === queueId);
 
-      broadcast({ type: 'call', queueId, number, calledBy: 'operator' });
+      broadcast({ type: 'call', queueId, number: ticket.number, suffix: ticket.suffix, calledBy: 'operator' });
       if (qs) broadcastQueueState(qs.queue.id, qs.lastCalled, qs.waiting);
 
       if (config.ttsEnabled && isTtsAvailable()) {
-        announceNumber(number, queue?.name ?? '', config.ttsLanguage);
+        announceNumber(ticket.number, queue?.name ?? '', config.ttsLanguage);
       }
 
-      return { ok: true, number };
+      return { ok: true, number: ticket.number, suffix: ticket.suffix };
     } catch (err: any) {
       if (err.message === 'EMPTY_QUEUE') return { ok: false, error: 'EMPTY_QUEUE' };
       logError(`call-next IPC error: ${err.message}`);

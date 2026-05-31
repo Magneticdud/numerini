@@ -4,6 +4,7 @@ interface QueueState {
   id: number;
   name: string;
   lastCalled: number;
+  lastCalledSuffix: string | null;
   waiting: number;
 }
 
@@ -13,7 +14,7 @@ export default function DisplayApp() {
   const [queues, setQueues] = useState<QueueState[]>([]);
   const [config, setConfig] = useState<any>(null);
   const [activeIdx, setActiveIdx] = useState(0);
-  const [recentCall, setRecentCall] = useState<{ queueId: number; number: number } | null>(null);
+  const [recentCall, setRecentCall] = useState<{ queueId: number; number: number; suffix: string | null } | null>(null);
   const [showingCall, setShowingCall] = useState(false);
   const chimeTimer = useRef<ReturnType<typeof setTimeout>>();
   const rotateTimer = useRef<ReturnType<typeof setInterval>>();
@@ -21,21 +22,31 @@ export default function DisplayApp() {
   useEffect(() => {
     window.numerini.getConfig().then(setConfig);
     window.numerini.getQueues().then((qs) => {
-      setQueues(qs.map((q: any) => ({ id: q.id, name: q.name, lastCalled: q.lastCalled, waiting: q.waiting })));
+      setQueues(qs.map((q: any) => ({ id: q.id, name: q.name, lastCalled: q.lastCalled, lastCalledSuffix: null, waiting: q.waiting })));
     });
 
     const unsub = window.numerini.onEvent((event) => {
       if (event.type === 'call') {
-        setQueues(prev => prev.map(q => q.id === event.queueId ? { ...q, lastCalled: event.number } : q));
-        setRecentCall({ queueId: event.queueId, number: event.number });
+        setQueues(prev => prev.map(q =>
+          q.id === event.queueId
+            ? { ...q, lastCalled: event.number, lastCalledSuffix: event.suffix ?? null }
+            : q
+        ));
+        setRecentCall({ queueId: event.queueId, number: event.number, suffix: event.suffix ?? null });
         setShowingCall(true);
         clearTimeout(chimeTimer.current);
         chimeTimer.current = setTimeout(() => setShowingCall(false), CHIME_DURATION_MS);
         playChime();
       } else if (event.type === 'queue_state') {
-        setQueues(prev => prev.map(q => q.id === event.queueId ? { ...q, lastCalled: event.current, waiting: event.waiting } : q));
+        setQueues(prev => prev.map(q =>
+          q.id === event.queueId
+            ? { ...q, lastCalled: event.current, waiting: event.waiting }
+            : q
+        ));
       } else if (event.type === 'reset') {
-        setQueues(prev => prev.map(q => q.id === event.queueId ? { ...q, lastCalled: 0, waiting: 0 } : q));
+        setQueues(prev => prev.map(q =>
+          q.id === event.queueId ? { ...q, lastCalled: 0, lastCalledSuffix: null, waiting: 0 } : q
+        ));
       }
     });
 
@@ -88,7 +99,7 @@ export default function DisplayApp() {
 
       {/* Large number */}
       <div
-        key={`${displayQueue?.id}-${displayQueue?.lastCalled}`}
+        key={`${displayQueue?.id}-${displayQueue?.lastCalled}-${displayQueue?.lastCalledSuffix}`}
         style={{
           fontFamily: 'var(--font-display)', fontWeight: 800,
           fontSize: 'clamp(10rem, 40vw, 30rem)',
@@ -97,7 +108,9 @@ export default function DisplayApp() {
           animation: showingCall ? 'callReveal 0.5s cubic-bezier(0.22,1,0.36,1)' : 'none',
         }}
       >
-        {String(displayQueue?.lastCalled ?? 0).padStart(3, '0')}
+        {displayQueue
+          ? String(displayQueue.lastCalled).padStart(3, '0') + (displayQueue.lastCalledSuffix ?? '')
+          : '000'}
       </div>
 
       {/* Multi-queue indicator dots */}

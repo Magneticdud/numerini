@@ -4,10 +4,11 @@ import { ipcMain, WebContents } from 'electron';
 // ── Typed event definitions ──────────────────────────────────────────────────
 
 export type NumeriniEvent =
-  | { type: 'call';        queueId: number; number: number; calledBy: string }
-  | { type: 'queue_state'; queueId: number; current: number; waiting: number }
-  | { type: 'reset';       queueId: number }
-  | { type: 'ticket_status'; ticketId: number; position: number; eta: number | null };
+  | { type: 'call';             queueId: number; number: number; suffix: string | null; calledBy: string }
+  | { type: 'queue_state';      queueId: number; current: number; waiting: number }
+  | { type: 'reset';            queueId: number }
+  | { type: 'ticket_status';    ticketId: number; position: number; eta: number | null }
+  | { type: 'ticket:transferred'; queueId: number; newTicketId: number; number: number; suffix: string | null; originalTicketId: number };
 
 // WS client roles
 type ClientRole = 'display' | 'admin' | 'wait';
@@ -15,7 +16,7 @@ type ClientRole = 'display' | 'admin' | 'wait';
 interface WsClient {
   ws: WebSocket;
   role: ClientRole;
-  ticketId?: number; // for 'wait' clients
+  ticketId?: number; // for 'wait' clients — tracks the original ticket ID
   authenticated: boolean;
 }
 
@@ -33,7 +34,7 @@ export function registerRenderer(contents: WebContents): void {
 export function registerWsClient(ws: WebSocket, role: ClientRole, opts?: { ticketId?: number; token?: string; adminToken?: string }): void {
   const authenticated = role === 'admin'
     ? opts?.token === opts?.adminToken
-    : true; // display and wait clients are unauthenticated
+    : true;
 
   const client: WsClient = { ws, role, ticketId: opts?.ticketId, authenticated };
   wsClients.push(client);
@@ -47,24 +48,30 @@ export function registerWsClient(ws: WebSocket, role: ClientRole, opts?: { ticke
 export function broadcast(event: NumeriniEvent): void {
   const json = JSON.stringify(event);
 
-  // Route to Electron renderer processes via IPC
   for (const contents of rendererContents) {
     if (!contents.isDestroyed()) {
       contents.send('numerini-event', event);
     }
   }
 
-  // Route to WebSocket clients based on event type
   for (const client of wsClients) {
     if (client.ws.readyState !== WebSocket.OPEN) continue;
 
     if (event.type === 'call' || event.type === 'reset') {
-      // Sent to all clients
       client.ws.send(json);
     } else if (event.type === 'queue_state' && client.role === 'admin' && client.authenticated) {
       client.ws.send(json);
     } else if (event.type === 'ticket_status' && client.role === 'wait' && client.ticketId === event.ticketId) {
       client.ws.send(json);
+    } else if (event.type === 'ticket:transferred') {
+      // Send to display and admin so the waiting list updates immediately.
+      // Send to the wait client that was tracking the OLD ticket ID so the
+      // /wait page can redirect to the new ticket.
+      if (client.role === 'display' || (client.role === 'admin' && client.authenticated)) {
+        client.ws.send(json);
+      } else if (client.role === 'wait' && client.ticketId === event.originalTicketId) {
+        client.ws.send(json);
+      }
     }
   }
 }

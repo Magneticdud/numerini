@@ -21,13 +21,37 @@ header h1 { font-size: 1.3rem; font-weight: 700; }
 .btn-row { display: flex; gap: 0.75rem; flex-wrap: wrap; }
 button { padding: 0.65rem 1.25rem; border-radius: 0.5rem; border: none; font-size: 0.95rem; font-weight: 600; cursor: pointer; min-height: 44px; transition: opacity 0.15s; }
 button:disabled { opacity: 0.4; cursor: not-allowed; }
-.btn-primary { background: var(--brand); color: #fff; }
-.btn-danger  { background: #2d3748; color: var(--error); border: 1px solid var(--error); }
+.btn-primary  { background: var(--brand); color: #fff; }
+.btn-danger   { background: #2d3748; color: var(--error); border: 1px solid var(--error); }
+.btn-transfer { background: #2d3748; color: var(--warn); border: 1px solid var(--warn); }
 .last-num { font-family: 'Barlow Condensed', sans-serif; font-size: 2.5rem; font-weight: 800; color: var(--brand); }
-#toast { position: fixed; bottom: 1.5rem; left: 50%; transform: translateX(-50%); background: var(--bg2); border: 1px solid #333; padding: 0.75rem 1.5rem; border-radius: 0.5rem; display: none; z-index: 100; }
+.called-badge {
+  display: inline-flex; align-items: center; gap: 0.5rem;
+  background: rgba(49,130,206,0.15); border: 1px solid rgba(49,130,206,0.4);
+  border-radius: 0.4rem; padding: 0.25rem 0.6rem; font-size: 0.85rem;
+  color: var(--brand); margin-bottom: 0.75rem;
+}
+#toast { position: fixed; bottom: 1.5rem; left: 50%; transform: translateX(-50%); background: var(--bg2); border: 1px solid #333; padding: 0.75rem 1.5rem; border-radius: 0.5rem; display: none; z-index: 100; white-space: nowrap; }
 #auth-screen { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 80vh; gap: 1rem; }
 #auth-screen input { background: var(--bg2); border: 1px solid #333; color: var(--text); padding: 0.75rem 1rem; border-radius: 0.5rem; font-size: 1rem; width: 320px; }
 #ws-status { font-size: 0.8rem; color: var(--muted); }
+
+/* Transfer modal */
+dialog {
+  background: var(--bg2); color: var(--text); border: 1px solid #333;
+  border-radius: 1rem; padding: 1.75rem; max-width: 380px; width: 90%;
+}
+dialog::backdrop { background: rgba(0,0,0,0.7); }
+dialog h3 { font-size: 1.2rem; margin-bottom: 0.5rem; }
+dialog p  { color: var(--muted); font-size: 0.95rem; margin-bottom: 1rem; }
+dialog select {
+  width: 100%; padding: 0.65rem; background: #111; color: var(--text);
+  border: 1px solid #444; border-radius: 0.5rem; font-size: 1rem;
+  margin-bottom: 1.25rem;
+}
+.modal-actions { display: flex; gap: 0.75rem; justify-content: flex-end; }
+.modal-actions button { min-width: 110px; }
+#transfer-error { color: var(--error); font-size: 0.9rem; margin-top: 0.75rem; display: none; }
 </style>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@800&display=swap" rel="stylesheet">
@@ -43,21 +67,40 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 </div>
 <div id="toast"></div>
 
+<!-- Transfer modal — populated dynamically before showModal() -->
+<dialog id="transfer-modal">
+  <h3>Trasferisci numero <strong id="tm-num"></strong></h3>
+  <p>Seleziona la coda di destinazione:</p>
+  <select id="tm-queue-select"></select>
+  <p id="transfer-error"></p>
+  <div class="modal-actions">
+    <button onclick="document.getElementById('transfer-modal').close()">Annulla</button>
+    <button class="btn-primary" id="tm-confirm-btn" onclick="executeTransfer()">Trasferisci e stampa</button>
+  </div>
+</dialog>
+
 <script>
 let TOKEN = localStorage.getItem('numerini_token') || '';
 let ws = null;
 let queues = [];
 
+// Tracks the currently-called ticket per queue: { [queueId]: { id, number, suffix } | null }
+let calledTickets = {};
+// The queue being transferred (set when modal opens)
+let transferSourceQueueId = null;
+
+// ── Auth ──────────────────────────────────────────────────────────────────────
+
 function login() {
   TOKEN = document.getElementById('token-input').value.trim();
   if (!TOKEN) return;
-  fetch('/api/status').then(r => r.json()).then(data => {
-    localStorage.setItem('numerini_token', TOKEN);
-    loadAdmin();
-  }).catch(() => {
-    document.getElementById('auth-err').style.display = '';
-  });
+  fetch('/api/status')
+    .then(r => { if (!r.ok) throw new Error(); return r.json(); })
+    .then(() => { localStorage.setItem('numerini_token', TOKEN); loadAdmin(); })
+    .catch(() => { document.getElementById('auth-err').style.display = ''; });
 }
+
+// ── Admin shell ───────────────────────────────────────────────────────────────
 
 function loadAdmin() {
   document.getElementById('app').innerHTML = `
@@ -77,59 +120,191 @@ async function fetchQueues() {
   renderQueues();
 }
 
-function renderQueues() {
-  const el = document.getElementById('main');
-  if (!queues.length) { el.innerHTML = '<p style="color:var(--muted);text-align:center;padding:3rem">Nessuna coda configurata</p>'; return; }
-  el.innerHTML = queues.map(q => `
-    <div class="queue-card" id="q${q.id}">
-      <div class="queue-name">${q.name}</div>
-      <div class="queue-info">${q.waiting ?? 0} in attesa</div>
-      <div class="last-num">${q.lastCalled ? String(q.lastCalled).padStart(3,'0') : '—'}</div>
-      <div class="btn-row" style="margin-top:1rem">
-        <button class="btn-primary" onclick="callNext(${q.id})" ${!q.waiting ? 'disabled' : ''}>Chiama successivo</button>
-        <button class="btn-danger" onclick="confirmReset(${q.id}, '${q.name}')">Reset</button>
-      </div>
-    </div>
-  `).join('');
+// ── Render ────────────────────────────────────────────────────────────────────
+
+function formatLabel(number, suffix) {
+  return String(number).padStart(3, '0') + (suffix || '');
 }
 
+function renderQueues() {
+  const el = document.getElementById('main');
+  if (!queues.length) {
+    el.innerHTML = '<p style="color:var(--muted);text-align:center;padding:3rem">Nessuna coda configurata</p>';
+    return;
+  }
+  el.innerHTML = queues.map(q => {
+    const ct = calledTickets[q.id];
+    const calledBadge = ct
+      ? `<div class="called-badge">In servizio: <strong>${formatLabel(ct.number, ct.suffix)}</strong></div>`
+      : '';
+    return `
+      <div class="queue-card" id="q${q.id}">
+        <div class="queue-name">${esc(q.name)}</div>
+        <div class="queue-info">${q.waiting ?? 0} in attesa</div>
+        <div class="last-num">${q.lastCalled ? formatLabel(q.lastCalled, q.lastCalledSuffix) : '—'}</div>
+        ${calledBadge}
+        <div class="btn-row" style="margin-top:1rem">
+          <button class="btn-primary" onclick="callNext(${q.id})" ${!q.waiting ? 'disabled' : ''}>
+            Chiama successivo
+          </button>
+          <button class="btn-transfer" onclick="openTransfer(${q.id})" ${!ct ? 'disabled' : ''}>
+            Trasferisci
+          </button>
+          <button class="btn-danger" onclick="confirmReset(${q.id})">Reset</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+// ── Queue operations ──────────────────────────────────────────────────────────
+
 async function callNext(queueId) {
-  const r = await fetch(`/api/queues/${queueId}/next`, { method: 'POST', headers: { Authorization: `Bearer ${TOKEN}` } });
+  const r = await fetch(`/api/queues/${queueId}/next`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${TOKEN}` },
+  });
   const data = await r.json();
   if (r.status === 409) { toast('Nessun cliente in attesa'); return; }
   if (!r.ok) { toast('Errore: ' + (data.error || r.status)); return; }
-  toast(`Chiamato numero ${String(data.number).padStart(3,'0')}`);
+  calledTickets[queueId] = { id: data.ticket_id, number: data.number, suffix: data.suffix };
+  toast(`Chiamato ${data.display}`);
+  renderQueues();
 }
 
-function confirmReset(queueId, name) {
+function confirmReset(queueId) {
+  const q = queues.find(q => q.id === queueId);
+  const name = q?.name ?? 'questa coda';
   if (!confirm(`Reset coda "${name}"? Tutti i numeri verranno azzerati.`)) return;
   fetch(`/api/queues/${queueId}/reset`, { method: 'POST', headers: { Authorization: `Bearer ${TOKEN}` } })
-    .then(() => toast('Coda resettata'));
+    .then(() => { calledTickets[queueId] = null; toast('Coda resettata'); renderQueues(); });
+}
+
+// ── Transfer ──────────────────────────────────────────────────────────────────
+
+function openTransfer(queueId) {
+  const ct = calledTickets[queueId];
+  if (!ct) return;
+
+  transferSourceQueueId = queueId;
+
+  document.getElementById('tm-num').textContent = formatLabel(ct.number, ct.suffix);
+  document.getElementById('transfer-error').style.display = 'none';
+  document.getElementById('tm-confirm-btn').disabled = false;
+
+  // Populate dropdown with all other active queues
+  const select = document.getElementById('tm-queue-select');
+  select.innerHTML = queues
+    .filter(q => q.id !== queueId)
+    .map(q => `<option value="${q.id}">${esc(q.name)}</option>`)
+    .join('');
+
+  document.getElementById('transfer-modal').showModal();
+}
+
+async function executeTransfer() {
+  const ct = calledTickets[transferSourceQueueId];
+  if (!ct) { document.getElementById('transfer-modal').close(); return; }
+
+  const targetQueueId = Number(document.getElementById('tm-queue-select').value);
+  const btn = document.getElementById('tm-confirm-btn');
+  btn.disabled = true;
+  btn.textContent = 'Trasferimento...';
+
+  const errEl = document.getElementById('transfer-error');
+  errEl.style.display = 'none';
+
+  try {
+    const r = await fetch(`/api/tickets/${ct.id}/transfer`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ target_queue_id: targetQueueId }),
+    });
+    const data = await r.json();
+    if (!r.ok) {
+      errEl.textContent = data.error || 'Errore durante il trasferimento';
+      errEl.style.display = '';
+      btn.disabled = false;
+      btn.textContent = 'Trasferisci e stampa';
+      return;
+    }
+    // Success: clear state, close modal, notify
+    calledTickets[transferSourceQueueId] = null;
+    const targetName = queues.find(q => q.id === targetQueueId)?.name ?? '';
+    document.getElementById('transfer-modal').close();
+    toast(`Trasferito → ${targetName}: ${data.new_ticket.display}`);
+    renderQueues();
+  } catch (e) {
+    errEl.textContent = 'Errore di rete. Riprova.';
+    errEl.style.display = '';
+    btn.disabled = false;
+    btn.textContent = 'Trasferisci e stampa';
+  }
+}
+
+// ── WebSocket ─────────────────────────────────────────────────────────────────
+
+function connectWs() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}/ws?role=admin&token=${TOKEN}`);
+
+  ws.onmessage = (e) => {
+    const ev = JSON.parse(e.data);
+
+    if (ev.type === 'queue_state') {
+      const q = queues.find(q => q.id === ev.queueId);
+      if (q) { q.lastCalled = ev.current; q.waiting = ev.waiting; renderQueues(); }
+
+    } else if (ev.type === 'reset') {
+      const q = queues.find(q => q.id === ev.queueId);
+      if (q) { q.lastCalled = 0; q.lastCalledSuffix = null; q.waiting = 0; }
+      calledTickets[ev.queueId] = null;
+      renderQueues();
+
+    } else if (ev.type === 'call') {
+      const q = queues.find(q => q.id === ev.queueId);
+      if (q) { q.lastCalled = ev.number; q.lastCalledSuffix = ev.suffix ?? null; }
+      // calledTickets updated by local callNext(); WS call events don't carry ticket id
+      renderQueues();
+
+    } else if (ev.type === 'ticket:transferred') {
+      // A transfer completed (possibly from a different admin terminal).
+      // Clear the called ticket for any queue that held the original ticket.
+      for (const [qid, ct] of Object.entries(calledTickets)) {
+        if (ct && ct.id === ev.originalTicketId) {
+          calledTickets[qid] = null;
+          break;
+        }
+      }
+      // Update queue waiting counts via the queue_state broadcasts that
+      // the server sends alongside ticket:transferred.
+      renderQueues();
+    }
+  };
+
+  ws.onclose = () => {
+    const el = document.getElementById('ws-status');
+    if (el) el.innerHTML = '<span class="status-dot" style="background:var(--error)"></span>Disconnesso';
+    setTimeout(connectWs, 3000);
+  };
+}
+
+// ── Utility ───────────────────────────────────────────────────────────────────
+
+function esc(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function toast(msg) {
   const el = document.getElementById('toast');
   el.textContent = msg; el.style.display = 'block';
-  setTimeout(() => { el.style.display = 'none'; }, 3000);
-}
-
-function connectWs() {
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  ws = new WebSocket(`${proto}://${location.host}/ws?role=admin&token=${TOKEN}`);
-  ws.onmessage = (e) => {
-    const ev = JSON.parse(e.data);
-    if (ev.type === 'queue_state') {
-      const q = queues.find(q => q.id === ev.queueId);
-      if (q) { q.lastCalled = ev.current; q.waiting = ev.waiting; renderQueues(); }
-    } else if (ev.type === 'reset') {
-      const q = queues.find(q => q.id === ev.queueId);
-      if (q) { q.lastCalled = 0; q.waiting = 0; renderQueues(); }
-    }
-  };
-  ws.onclose = () => {
-    document.getElementById('ws-status').innerHTML = '<span class="status-dot" style="background:var(--error)"></span>Disconnesso';
-    setTimeout(connectWs, 3000);
-  };
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => { el.style.display = 'none'; }, 3000);
 }
 
 // Auto-login if token saved
