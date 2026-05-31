@@ -83,13 +83,15 @@ export default function App() {
     try {
       const result = await window.numerini.checkOrder(queueId, orderNumber);
       if (cancelled) return;
+      clearTimeout(timeoutId); // clear before issuing — prevents timer firing mid-commit
       const advisory =
         result === 'not_ready' ? 'Il sistema non ha ancora aggiornato il tuo ordine. Verifica al bancone.' :
         result === 'error'     ? "Verifica dell'ordine non disponibile. Il ticket è comunque valido." :
         undefined;
       await doIssueTicket(queueId, queueName, advisory);
-    } finally {
+    } catch {
       clearTimeout(timeoutId);
+      if (!cancelled) goIdle();
     }
   };
 
