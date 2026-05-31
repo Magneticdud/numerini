@@ -1,7 +1,11 @@
 import { getDb } from './db';
 import type { QueueConfig } from './config';
+import Database from 'better-sqlite3';
 
 const MAX_QUEUE_NUMBER = 999;
+// Letters available for transfer suffix. 'A' is reserved to avoid visual
+// confusion with queue-letter prefixes on receipts (e.g. "A-22").
+const SUFFIX_ALPHABET = 'BCDEFGHIJKLMNOPQRSTUVWXYZ';
 
 export interface Queue {
   id: number;
@@ -18,8 +22,10 @@ export interface Ticket {
   id: number;
   queueId: number;
   number: number;
+  suffix: string | null;
   issuedAt: string;
-  status: 'waiting' | 'called' | 'done';
+  originalIssuedAt: string | null;
+  status: 'waiting' | 'called' | 'done' | 'transferred';
 }
 
 export interface CallRecord {
@@ -28,6 +34,13 @@ export interface CallRecord {
   number: number;
   calledAt: string;
   calledBy: string;
+}
+
+export interface TransferResult {
+  newTicket: Ticket;
+  originalTicketId: number;
+  fromQueueId: number;
+  transferId: number;
 }
 
 // ── Queue CRUD ──────────────────────────────────────────────────────────────
@@ -73,10 +86,12 @@ export function issueTicket(queueId: number): Ticket {
 
   const txn = db.transaction(() => {
     db.prepare('UPDATE queues SET current_number=? WHERE id=?').run(nextNumber, queueId);
-    // Mark previous ticket for this number as done (wrap case)
+    // On wrap-around, mark the old waiting ticket done — but only non-suffix
+    // tickets, so any transferred ticket (suffix='B' etc.) at the same number
+    // is not accidentally clobbered.
     db.prepare(`
       UPDATE tickets SET status='done', called_at=CURRENT_TIMESTAMP
-      WHERE queue_id=? AND number=? AND status='waiting'
+      WHERE queue_id=? AND number=? AND suffix IS NULL AND status='waiting'
     `).run(queueId, nextNumber);
 
     const result = db.prepare(`
@@ -86,44 +101,158 @@ export function issueTicket(queueId: number): Ticket {
     return db.prepare('SELECT * FROM tickets WHERE id=?').get(result.lastInsertRowid) as any;
   });
 
-  const row = txn() as any;
-  return rowToTicket(row);
+  return rowToTicket(txn());
 }
 
 // ── Call next ───────────────────────────────────────────────────────────────
 
-export function callNext(queueId: number, calledBy = 'operator'): number {
+// Returns the full Ticket that was called (includes suffix, e.g. '22B').
+export function callNext(queueId: number, calledBy = 'operator'): Ticket {
   const db = getDb();
   const queue = db.prepare('SELECT * FROM queues WHERE id=? AND active=1').get(queueId) as any;
   if (!queue) throw new Error(`Queue ${queueId} not found`);
 
-  const waiting = db.prepare(`
-    SELECT number FROM tickets
+  // Pick the next ticket respecting composite ordering: number ASC, then
+  // suffix ASC NULLS FIRST (NULL < 'B' < 'C' ...), so 22 is called before 22B.
+  const waitingRow = db.prepare(`
+    SELECT * FROM tickets
     WHERE queue_id=? AND status='waiting'
-    ORDER BY number ASC LIMIT 1
-  `).get(queueId) as { number: number } | undefined;
+    ORDER BY number ASC, suffix ASC NULLS FIRST
+    LIMIT 1
+  `).get(queueId) as any | undefined;
 
-  if (!waiting) throw new Error('EMPTY_QUEUE');
+  if (!waitingRow) throw new Error('EMPTY_QUEUE');
 
-  const nextCalled = waiting.number;
+  const ticketId = waitingRow.id as number;
+  const nextNumber = waitingRow.number as number;
 
   const txn = db.transaction(() => {
-    // Mark previous called ticket as done
+    // Mark the previously called ticket as done
     db.prepare(`
       UPDATE tickets SET status='done', called_at=CURRENT_TIMESTAMP
       WHERE queue_id=? AND status='called'
     `).run(queueId);
-    // Mark this one as called
+    // Mark THIS ticket as called — use id to be precise (avoids suffix IS ? binding)
     db.prepare(`
       UPDATE tickets SET status='called', called_at=CURRENT_TIMESTAMP
-      WHERE queue_id=? AND number=? AND status='waiting'
-    `).run(queueId, nextCalled);
-    db.prepare('UPDATE queues SET last_called=? WHERE id=?').run(nextCalled, queueId);
-    db.prepare('INSERT INTO calls (queue_id, number, called_by) VALUES (?,?,?)').run(queueId, nextCalled, calledBy);
+      WHERE id=?
+    `).run(ticketId);
+    db.prepare('UPDATE queues SET last_called=? WHERE id=?').run(nextNumber, queueId);
+    db.prepare('INSERT INTO calls (queue_id, number, called_by) VALUES (?,?,?)').run(queueId, nextNumber, calledBy);
   });
 
   txn();
-  return nextCalled;
+  return rowToTicket(db.prepare('SELECT * FROM tickets WHERE id=?').get(ticketId) as any);
+}
+
+// ── Transfer ticket ─────────────────────────────────────────────────────────
+
+export function transferTicket(ticketId: number, targetQueueId: number): TransferResult {
+  const db = getDb();
+
+  const sourceRow = db.prepare('SELECT * FROM tickets WHERE id=?').get(ticketId) as any;
+  if (!sourceRow) throw new Error('TICKET_NOT_FOUND');
+  if (sourceRow.status === 'done' || sourceRow.status === 'transferred') {
+    throw new Error('TICKET_NOT_TRANSFERABLE');
+  }
+  if (sourceRow.queue_id === targetQueueId) throw new Error('SELF_TRANSFER');
+
+  const targetQueue = db.prepare('SELECT * FROM queues WHERE id=? AND active=1').get(targetQueueId) as any;
+  if (!targetQueue) throw new Error('TARGET_QUEUE_NOT_FOUND');
+
+  // Carry the oldest ancestor's timestamp through re-transfer chains
+  const originalIssuedAt = (sourceRow.original_issued_at ?? sourceRow.issued_at) as string;
+
+  const txn = db.transaction(() => {
+    const { insertAfterNumber, suffix } = computeTransferPosition(
+      db, originalIssuedAt, targetQueueId, targetQueue.last_called as number,
+    );
+
+    const insertResult = db.prepare(`
+      INSERT INTO tickets (queue_id, number, suffix, original_issued_at, status)
+      VALUES (?, ?, ?, ?, 'waiting')
+    `).run(targetQueueId, insertAfterNumber, suffix, originalIssuedAt);
+
+    const newTicketRow = db.prepare('SELECT * FROM tickets WHERE id=?').get(insertResult.lastInsertRowid) as any;
+
+    db.prepare(`
+      UPDATE tickets SET status='transferred', called_at=CURRENT_TIMESTAMP WHERE id=?
+    `).run(ticketId);
+
+    const transferRow = db.prepare(`
+      INSERT INTO ticket_transfers (original_ticket_id, new_ticket_id, from_queue_id, to_queue_id)
+      VALUES (?, ?, ?, ?)
+    `).run(ticketId, insertResult.lastInsertRowid, sourceRow.queue_id, targetQueueId);
+
+    return {
+      newTicket: rowToTicket(newTicketRow),
+      originalTicketId: ticketId,
+      fromQueueId: sourceRow.queue_id as number,
+      transferId: Number(transferRow.lastInsertRowid),
+    };
+  });
+
+  return txn() as TransferResult;
+}
+
+// Determine where to insert a transferred ticket in the target queue.
+// Uses COALESCE(original_issued_at, issued_at) as the effective arrival time
+// so re-transferred tickets keep their original position.
+function computeTransferPosition(
+  db: Database.Database,
+  originalIssuedAt: string,
+  targetQueueId: number,
+  lastCalled: number,
+): { insertAfterNumber: number; suffix: string } {
+  const waitingTickets = db.prepare(`
+    SELECT number, COALESCE(original_issued_at, issued_at) AS effective_at
+    FROM tickets
+    WHERE queue_id=? AND status='waiting'
+    ORDER BY effective_at ASC
+  `).all(targetQueueId) as { number: number; effective_at: string }[];
+
+  // Walk the sorted list to find where originalIssuedAt fits.
+  // insertAfterNumber = null means Tizio arrived before everyone.
+  let insertAfterNumber: number | null = null;
+  for (const ticket of waitingTickets) {
+    if (ticket.effective_at <= originalIssuedAt) {
+      insertAfterNumber = ticket.number;
+    } else {
+      break;
+    }
+  }
+
+  // null sentinel → arrived before all waiting → use lastCalled as the base
+  // so the new ticket sorts before the first waiting number.
+  const baseNumber = insertAfterNumber ?? lastCalled;
+
+  // Find the next unused suffix letter at this base number.
+  const usedSuffixes = new Set(
+    (db.prepare(`
+      SELECT suffix FROM tickets
+      WHERE queue_id=? AND number=? AND suffix IS NOT NULL AND status='waiting'
+    `).all(targetQueueId, baseNumber) as { suffix: string }[]).map(r => r.suffix),
+  );
+
+  let suffix = 'B'; // fallback if alphabet is somehow exhausted
+  for (const letter of SUFFIX_ALPHABET) {
+    if (!usedSuffixes.has(letter)) {
+      suffix = letter;
+      break;
+    }
+  }
+
+  return { insertAfterNumber: baseNumber, suffix };
+}
+
+// Returns the new ticket ID created by the most recent transfer of originalTicketId,
+// or null if no transfer record exists.
+export function getTransferNewTicketId(originalTicketId: number): number | null {
+  const db = getDb();
+  const row = db.prepare(
+    'SELECT new_ticket_id FROM ticket_transfers WHERE original_ticket_id=? ORDER BY id DESC LIMIT 1',
+  ).get(originalTicketId) as { new_ticket_id: number } | undefined;
+  return row?.new_ticket_id ?? null;
 }
 
 // ── Reset ───────────────────────────────────────────────────────────────────
@@ -132,7 +261,11 @@ export function resetQueue(queueId: number): void {
   const db = getDb();
   const txn = db.transaction(() => {
     db.prepare('UPDATE queues SET current_number=0, last_called=0 WHERE id=?').run(queueId);
-    db.prepare(`UPDATE tickets SET status='done' WHERE queue_id=? AND status IN ('waiting','called')`).run(queueId);
+    // Include 'transferred' so source tickets don't accumulate across resets.
+    db.prepare(`
+      UPDATE tickets SET status='done'
+      WHERE queue_id=? AND status IN ('waiting','called','transferred')
+    `).run(queueId);
   });
   txn();
 }
@@ -151,7 +284,7 @@ export function estimatedWaitSeconds(queueId: number): number | null {
     ORDER BY called_at DESC LIMIT 31
   `).all(queueId) as { called_at: string }[];
 
-  if (recentCalls.length < 11) return null; // need at least 10 intervals
+  if (recentCalls.length < 11) return null;
 
   const intervals: number[] = [];
   for (let i = 0; i < recentCalls.length - 1; i++) {
@@ -171,17 +304,31 @@ export function estimatedWaitSeconds(queueId: number): number | null {
   return Math.round(waiting * avg);
 }
 
-export function getTicketPosition(ticketId: number): { position: number; queueId: number; number: number; status: string } | null {
+export function getTicketPosition(
+  ticketId: number,
+): { position: number; queueId: number; number: number; suffix: string | null; status: string } | null {
   const db = getDb();
   const ticket = db.prepare('SELECT * FROM tickets WHERE id=?').get(ticketId) as any;
   if (!ticket) return null;
 
-  const position = (db.prepare(`
-    SELECT COUNT(*) as n FROM tickets
-    WHERE queue_id=? AND number<? AND status='waiting'
-  `).get(ticket.queue_id, ticket.number) as { n: number }).n;
+  // Fetch all waiting tickets in call order, then find this ticket's index.
+  // Simple findIndex avoids complex SQL with multiple bound parameters for
+  // the composite (number, suffix) comparison.
+  const waiting = db.prepare(`
+    SELECT id FROM tickets
+    WHERE queue_id=? AND status='waiting'
+    ORDER BY number ASC, suffix ASC NULLS FIRST
+  `).all(ticket.queue_id) as { id: number }[];
 
-  return { position, queueId: ticket.queue_id, number: ticket.number, status: ticket.status };
+  const pos = waiting.findIndex(r => r.id === ticket.id);
+
+  return {
+    position: pos === -1 ? 0 : pos,
+    queueId: ticket.queue_id,
+    number: ticket.number,
+    suffix: ticket.suffix ?? null,
+    status: ticket.status,
+  };
 }
 
 export function getQueueStatus(): { queue: Queue; waiting: number; lastCalled: number }[] {
@@ -214,7 +361,9 @@ function rowToTicket(row: any): Ticket {
     id: row.id,
     queueId: row.queue_id,
     number: row.number,
+    suffix: row.suffix ?? null,
     issuedAt: row.issued_at,
+    originalIssuedAt: row.original_issued_at ?? null,
     status: row.status,
   };
 }

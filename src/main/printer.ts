@@ -25,7 +25,7 @@ function text(s: string): Buffer { return Buffer.from(s + '\n', 'utf-8'); }
 interface ReceiptData {
   shopName: string;
   queueName: string;
-  number: number;
+  ticketLabel: string; // '022' for normal tickets, '22B' for transfers
   waitUrl?: string;
   logoPath?: string;
   advisory?: string;
@@ -43,7 +43,7 @@ export async function printTicket(printerPath: string, data: ReceiptData): Promi
     text('─────────────────────────'),
     ALIGN_C,
     BOLD_ON, DOUBLE_H_ON,
-    text(String(data.number).padStart(3, '0')),
+    text(data.ticketLabel.padStart(4, ' ')),
     DOUBLE_H_OFF, BOLD_OFF,
     text('─────────────────────────'),
   ];
