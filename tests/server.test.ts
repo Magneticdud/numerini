@@ -49,6 +49,7 @@ const baseConfig: Config = {
 let app: ReturnType<typeof createExpressApp>;
 
 beforeEach(() => {
+  vi.clearAllMocks();
   setDb(new Database(':memory:'));
   initQueues([Q_NORMAL, Q_ORDER, Q_NO_URL]);
   app = createExpressApp(baseConfig);
@@ -56,7 +57,6 @@ beforeEach(() => {
 
 afterEach(() => {
   closeDb();
-  vi.clearAllMocks();
 });
 
 // ── POST /api/check-order (SSRF remediation) ────────────────────────────────
@@ -104,5 +104,12 @@ describe('POST /api/check-order', () => {
     expect(res.status).toBe(200);
     expect(res.body.result).toBe('ready');
     expect(checkOrder).toHaveBeenCalledWith('https://example.com/orders', '42');
+  });
+
+  it('returns 500 when checkOrder throws', async () => {
+    const { checkOrder } = await import('../src/main/order-check');
+    (checkOrder as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('upstream error'));
+    const res = await request(app).post('/api/check-order').send({ queueId: Q_ORDER.id, orderNumber: '42' });
+    expect(res.status).toBe(500);
   });
 });

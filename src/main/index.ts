@@ -108,8 +108,11 @@ async function main(): Promise<void> {
 
   ipcMain.handle('check-order', async (_event, { queueId, orderNumber }: { queueId: number; orderNumber: string }) => {
     const { checkOrder } = await import('./order-check');
-    const queue = getQueue(Number(queueId));
-    if (!queue?.orderCheckUrl) return 'error';
+    const queue = getQueue(queueId);
+    if (!queue?.orderCheckUrl) {
+      logError(`check-order IPC: no orderCheckUrl for queue ${queueId}`);
+      return 'error';
+    }
     return checkOrder(queue.orderCheckUrl, orderNumber);
   });
 

@@ -74,14 +74,23 @@ export default function App() {
     }
   };
 
+  const CHECKING_TIMEOUT_MS = 10_000;
+
   const handleNumpadConfirm = async (queueId: number, queueName: string, orderNumber: string) => {
     setScreen({ name: 'checking' });
-    const result = await window.numerini.checkOrder(queueId, orderNumber);
-    // Always issue the ticket — result only affects the message
-    const advisory = result === 'not_ready'
-      ? 'Il sistema non ha ancora aggiornato il tuo ordine. Verifica al bancone.'
-      : undefined;
-    await doIssueTicket(queueId, queueName, advisory);
+    let cancelled = false;
+    const timeoutId = setTimeout(() => { cancelled = true; goIdle(); }, CHECKING_TIMEOUT_MS);
+    try {
+      const result = await window.numerini.checkOrder(queueId, orderNumber);
+      if (cancelled) return;
+      const advisory =
+        result === 'not_ready' ? 'Il sistema non ha ancora aggiornato il tuo ordine. Verifica al bancone.' :
+        result === 'error'     ? "Verifica dell'ordine non disponibile. Il ticket è comunque valido." :
+        undefined;
+      await doIssueTicket(queueId, queueName, advisory);
+    } finally {
+      clearTimeout(timeoutId);
+    }
   };
 
   const queueName = (id: number) => queues.find(q => q.id === id)?.name ?? '';

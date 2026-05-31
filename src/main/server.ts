@@ -201,7 +201,7 @@ export function createExpressApp(config: Config, tunnelUrl?: string): ReturnType
 
   app.post('/api/issue', auth, async (req, res) => {
     const { queueId } = req.body;
-    if (!queueId) return res.status(400).json({ error: 'queueId required' });
+    if (queueId == null) return res.status(400).json({ error: 'queueId required' });
     try {
       const ticket = issueTicket(Number(queueId));
       const status = getQueueStatus();
@@ -222,14 +222,19 @@ export function createExpressApp(config: Config, tunnelUrl?: string): ReturnType
 
   app.post('/api/check-order', async (req, res) => {
     const { queueId, orderNumber } = req.body;
-    if (!queueId || !orderNumber) {
+    if (queueId == null || !orderNumber) {
       return res.status(400).json({ error: 'queueId and orderNumber required' });
     }
     const queue = getQueue(Number(queueId));
     if (!queue) return res.status(404).json({ error: 'Queue not found' });
     if (!queue.orderCheckUrl) return res.status(400).json({ error: 'No order check URL configured for this queue' });
-    const result = await checkOrder(queue.orderCheckUrl, String(orderNumber));
-    res.json({ result });
+    try {
+      const result = await checkOrder(queue.orderCheckUrl, String(orderNumber));
+      res.json({ result });
+    } catch (err: any) {
+      logError(`check-order API error: ${err?.message}`);
+      res.status(500).json({ error: 'Internal error' });
+    }
   });
 
   return app;
