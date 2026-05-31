@@ -7,13 +7,37 @@
 <style>
 :root { --brand: #3182ce; --bg: #111; --text: #fff; --muted: #a0aec0; --warn: #d69e2e; --success: #38a169; }
 * { box-sizing: border-box; margin: 0; padding: 0; }
-body { background: var(--bg); color: var(--text); font-family: Inter, system-ui, sans-serif; min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 2rem; text-align: center; }
-.number { font-family: 'Barlow Condensed', sans-serif; font-weight: 800; font-size: clamp(5rem, 30vw, 10rem); color: var(--brand); line-height: 1; margin: 1.5rem 0; }
+body {
+  background: var(--bg); color: var(--text);
+  font-family: Inter, system-ui, sans-serif; min-height: 100vh;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: 2rem; text-align: center;
+}
+.number  { font-family: 'Barlow Condensed', sans-serif; font-weight: 800; font-size: clamp(5rem, 30vw, 10rem); color: var(--brand); line-height: 1; margin: 1.5rem 0; }
 .queue-name { font-size: 1.1rem; color: var(--muted); margin-bottom: 0.5rem; }
 .position { font-size: 1.3rem; margin: 0.5rem 0; }
-.eta { color: var(--muted); font-size: 1rem; }
-.status-called { background: var(--success); color: #fff; padding: 1.5rem; border-radius: 1rem; margin-top: 1rem; font-size: 1.2rem; font-weight: 600; }
-.status-done { background: #2d3748; padding: 1.5rem; border-radius: 1rem; margin-top: 1rem; font-size: 1rem; color: var(--muted); }
+.eta      { color: var(--muted); font-size: 1rem; }
+.status-called {
+  background: var(--success); color: #fff; padding: 1.5rem; border-radius: 1rem;
+  margin-top: 1rem; font-size: 1.2rem; font-weight: 600;
+}
+.status-done {
+  background: #2d3748; padding: 1.5rem; border-radius: 1rem;
+  margin-top: 1rem; font-size: 1rem; color: var(--muted);
+}
+.status-transferred {
+  background: #2d3748; border: 1px solid var(--warn); padding: 1.5rem;
+  border-radius: 1rem; margin-top: 1rem;
+}
+.status-transferred h3 { color: var(--warn); font-size: 1.1rem; margin-bottom: 0.75rem; }
+.status-transferred p  { color: var(--muted); font-size: 0.95rem; margin-bottom: 0.75rem; }
+.new-number { font-family: 'Barlow Condensed', sans-serif; font-weight: 800; font-size: 3rem; color: var(--brand); margin: 0.5rem 0; }
+.btn-link {
+  display: inline-block; margin-top: 1rem; padding: 0.65rem 1.5rem;
+  background: var(--brand); color: #fff; border-radius: 0.5rem;
+  font-weight: 600; font-size: 1rem; text-decoration: none;
+}
+.countdown { font-size: 0.85rem; color: var(--muted); margin-top: 0.5rem; }
 #loading { color: var(--muted); font-size: 1.1rem; }
 </style>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@800&display=swap" rel="stylesheet">
@@ -30,6 +54,7 @@ body { background: var(--bg); color: var(--text); font-family: Inter, system-ui,
 <script>
 const ticketId = parseInt(location.pathname.split('/').pop() || '0');
 let ws;
+let autoRedirectTimer;
 
 async function init() {
   const r = await fetch(`/api/ticket/${ticketId}/status`);
@@ -38,19 +63,34 @@ async function init() {
     return;
   }
   const data = await r.json();
+
+  // If the ticket was already transferred before we opened the page,
+  // redirect directly to the new ticket.
+  if (data.status === 'transferred' && data.new_ticket_id) {
+    location.replace(`/wait/${data.new_ticket_id}`);
+    return;
+  }
+
   document.getElementById('loading').style.display = 'none';
   document.getElementById('content').style.display = '';
-  document.getElementById('number').textContent = String(data.number).padStart(3, '0');
+  document.getElementById('number').textContent = formatLabel(data.number, data.suffix);
   updateStatus(data);
   connectWs();
+}
+
+function formatLabel(number, suffix) {
+  return String(number).padStart(3, '0') + (suffix || '');
 }
 
 function updateStatus({ status, position, eta }) {
   const el = document.getElementById('status-area');
   if (status === 'called') {
-    el.innerHTML = `<div class="status-called">🔔 Il tuo numero è stato chiamato!<br>Presentati allo sportello.</div>`;
+    el.innerHTML = `<div class="status-called">Il tuo numero è stato chiamato!<br>Presentati allo sportello.</div>`;
   } else if (status === 'done') {
     el.innerHTML = `<div class="status-done">Il tuo numero è già stato chiamato.<br>Presentati allo sportello.</div>`;
+  } else if (status === 'transferred') {
+    // Handled via WS event; show generic message while waiting for redirect
+    el.innerHTML = `<div class="status-transferred"><h3>Numero trasferito</h3><p>Aggiornamento in corso...</p></div>`;
   } else {
     const etaText = eta != null ? `~${Math.ceil(eta / 60)} min` : 'calcolo in corso...';
     el.innerHTML = `
@@ -60,17 +100,59 @@ function updateStatus({ status, position, eta }) {
   }
 }
 
+// Show transfer notice with new number and auto-redirect countdown.
+function showTransferred(newTicketId, newNumber, newSuffix) {
+  clearTimeout(autoRedirectTimer);
+  document.getElementById('loading').style.display = 'none';
+  document.getElementById('content').style.display = '';
+
+  const label = formatLabel(newNumber, newSuffix);
+  const statusEl = document.getElementById('status-area');
+  statusEl.innerHTML = `
+    <div class="status-transferred">
+      <h3>Il tuo biglietto è stato trasferito</h3>
+      <p>Il tuo nuovo numero nella nuova coda:</p>
+      <div class="new-number">${label}</div>
+      <p>Il tuo posto è garantito.</p>
+      <a class="btn-link" href="/wait/${newTicketId}">Vai al nuovo biglietto</a>
+      <p class="countdown" id="countdown">Redirect automatico in 5 secondi...</p>
+    </div>
+  `;
+
+  // Auto-redirect after 5 seconds
+  let secs = 5;
+  const tick = setInterval(() => {
+    secs--;
+    const el = document.getElementById('countdown');
+    if (el) el.textContent = `Redirect automatico in ${secs} second${secs === 1 ? 'o' : 'i'}...`;
+    if (secs <= 0) {
+      clearInterval(tick);
+      location.replace(`/wait/${newTicketId}`);
+    }
+  }, 1000);
+}
+
 function connectWs() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   ws = new WebSocket(`${proto}://${location.host}/ws?role=wait&ticketId=${ticketId}`);
+
   ws.onmessage = (e) => {
     const ev = JSON.parse(e.data);
-    if (ev.type === 'ticket_status') updateStatus(ev);
-    if (ev.type === 'call') {
-      // Refresh our own status
+
+    if (ev.type === 'ticket_status') {
+      updateStatus(ev);
+    } else if (ev.type === 'call') {
+      // The queue advanced — refresh our position
       fetch(`/api/ticket/${ticketId}/status`).then(r => r.json()).then(updateStatus);
+    } else if (ev.type === 'ticket:transferred' && ev.originalTicketId === ticketId) {
+      // Our ticket was transferred. Clear onclose BEFORE closing so the
+      // reconnect handler doesn't immediately reconnect on the old ticket ID.
+      ws.onclose = null;
+      ws.close();
+      showTransferred(ev.newTicketId, ev.number, ev.suffix);
     }
   };
+
   ws.onclose = () => setTimeout(connectWs, 3000);
 }
 
