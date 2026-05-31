@@ -59,6 +59,8 @@ sudo bash packaging/install.sh
 - REST API mutations require a bearer token (shown in first-run wizard)
 - `order_check_url` for "Ritiro lavori": any URL is accepted. If set to a local network IP, it bypasses internet access. This is by design for shops with local ERP systems. Physical access to the machine is required to modify this setting.
 - The system assumes a trusted shop environment. For untrusted networks, use firewall rules to restrict port 8080.
+- `/admin` and `/wait/:ticketId` are rate-limited to 60 requests per minute per IP to protect against request flooding.
+- The customer waiting page (`wait.html`) uses `textContent` (not `innerHTML`) to render queue position and ETA, preventing XSS via server-supplied values.
 
 ## Architecture
 
