@@ -147,11 +147,14 @@ export function createExpressApp(config: Config, tunnelUrl?: string): ReturnType
   });
 
   app.post('/api/check-order', async (req, res) => {
-    const { orderCheckUrl, orderNumber } = req.body;
-    if (!orderCheckUrl || !orderNumber) {
-      return res.status(400).json({ error: 'orderCheckUrl and orderNumber required' });
+    const { queueId, orderNumber } = req.body;
+    if (!queueId || !orderNumber) {
+      return res.status(400).json({ error: 'queueId and orderNumber required' });
     }
-    const result = await checkOrder(orderCheckUrl, String(orderNumber));
+    const queue = getQueue(Number(queueId));
+    if (!queue) return res.status(404).json({ error: 'Queue not found' });
+    if (!queue.orderCheckUrl) return res.status(400).json({ error: 'No order check URL configured for this queue' });
+    const result = await checkOrder(queue.orderCheckUrl, String(orderNumber));
     res.json({ result });
   });
 

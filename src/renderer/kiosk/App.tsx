@@ -12,7 +12,7 @@ declare global {
       issueTicket: (queueId: number) => Promise<{ ok: boolean; ticket?: any; error?: string }>;
       callNext: (queueId: number) => Promise<{ ok: boolean; number?: number; error?: string }>;
       resetQueue: (queueId: number) => Promise<{ ok: boolean }>;
-      checkOrder: (url: string, num: string) => Promise<'ready' | 'not_ready' | 'error'>;
+      checkOrder: (queueId: number, num: string) => Promise<'ready' | 'not_ready' | 'error'>;
       wizardComplete: (result: any) => void;
       onEvent: (cb: (event: any) => void) => () => void;
       onWizardMode: (cb: (data: any) => void) => void;
@@ -23,7 +23,7 @@ declare global {
 type Screen =
   | { name: 'idle' }
   | { name: 'queue-select' }
-  | { name: 'numpad'; queueId: number; orderCheckUrl: string }
+  | { name: 'numpad'; queueId: number }
   | { name: 'checking' }
   | { name: 'confirm'; ticketNumber: number; queueName: string; advisory?: string }
   | { name: 'error'; message: string };
@@ -54,7 +54,7 @@ export default function App() {
 
   const handleQueueTap = useCallback(async (queue: any) => {
     if (queue.type === 'order_pickup' && queue.orderCheckUrl) {
-      setScreen({ name: 'numpad', queueId: queue.id, orderCheckUrl: queue.orderCheckUrl });
+      setScreen({ name: 'numpad', queueId: queue.id });
       return;
     }
     await doIssueTicket(queue.id, queue.name);
@@ -74,9 +74,9 @@ export default function App() {
     }
   };
 
-  const handleNumpadConfirm = async (queueId: number, orderCheckUrl: string, queueName: string, orderNumber: string) => {
+  const handleNumpadConfirm = async (queueId: number, queueName: string, orderNumber: string) => {
     setScreen({ name: 'checking' });
-    const result = await window.numerini.checkOrder(orderCheckUrl, orderNumber);
+    const result = await window.numerini.checkOrder(queueId, orderNumber);
     // Always issue the ticket — result only affects the message
     const advisory = result === 'not_ready'
       ? 'Il sistema non ha ancora aggiornato il tuo ordine. Verifica al bancone.'
@@ -104,7 +104,7 @@ export default function App() {
     return (
       <OrderNumpad
         queueName={queueName(screen.queueId)}
-        onConfirm={(num) => handleNumpadConfirm(screen.queueId, screen.orderCheckUrl, queueName(screen.queueId), num)}
+        onConfirm={(num) => handleNumpadConfirm(screen.queueId, queueName(screen.queueId), num)}
         onBack={() => setScreen({ name: 'queue-select' })}
       />
     );
