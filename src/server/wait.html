@@ -107,17 +107,23 @@ function showTransferred(newTicketId, newNumber, newSuffix) {
   document.getElementById('content').style.display = '';
 
   const label = formatLabel(newNumber, newSuffix);
+  const safeTicketId = encodeURIComponent(String(newTicketId));
   const statusEl = document.getElementById('status-area');
   statusEl.innerHTML = `
     <div class="status-transferred">
       <h3>Il tuo biglietto è stato trasferito</h3>
       <p>Il tuo nuovo numero nella nuova coda:</p>
-      <div class="new-number">${label}</div>
+      <div class="new-number" id="new-number"></div>
       <p>Il tuo posto è garantito.</p>
-      <a class="btn-link" href="/wait/${newTicketId}">Vai al nuovo biglietto</a>
+      <a class="btn-link" id="new-ticket-link">Vai al nuovo biglietto</a>
       <p class="countdown" id="countdown">Redirect automatico in 5 secondi...</p>
     </div>
   `;
+
+  const numberEl = document.getElementById('new-number');
+  if (numberEl) numberEl.textContent = label;
+  const linkEl = document.getElementById('new-ticket-link');
+  if (linkEl) linkEl.setAttribute('href', `/wait/${safeTicketId}`);
 
   // Auto-redirect after 5 seconds
   let secs = 5;
@@ -127,7 +133,7 @@ function showTransferred(newTicketId, newNumber, newSuffix) {
     if (el) el.textContent = `Redirect automatico in ${secs} second${secs === 1 ? 'o' : 'i'}...`;
     if (secs <= 0) {
       clearInterval(tick);
-      location.replace(`/wait/${newTicketId}`);
+      location.replace(`/wait/${safeTicketId}`);
     }
   }, 1000);
 }
