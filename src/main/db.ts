@@ -6,7 +6,7 @@ import fs from 'fs';
 const DB_DIR = path.join(os.homedir(), '.config', 'numerini');
 const DB_PATH = path.join(DB_DIR, 'numerini.db');
 
-let db: Database.Database;
+let db: Database.Database | undefined;
 
 export function getDb(): Database.Database {
   if (!db) {
@@ -16,7 +16,12 @@ export function getDb(): Database.Database {
     db.pragma('foreign_keys = ON');
     migrate(db);
   }
-  return db;
+  return db!;
+}
+
+export function setDb(database: Database.Database): void {
+  db = database;
+  migrate(db);
 }
 
 function migrate(db: Database.Database): void {
@@ -60,5 +65,6 @@ function migrate(db: Database.Database): void {
 export function closeDb(): void {
   if (db) {
     db.close();
+    db = undefined;
   }
 }
