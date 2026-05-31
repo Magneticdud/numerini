@@ -1,7 +1,7 @@
 import { app, ipcMain } from 'electron';
 import { loadConfig, configExists, logError } from './config';
 import { getDb, closeDb } from './db';
-import { initQueues, issueTicket, callNext, resetQueue, getQueueStatus, estimatedWaitSeconds } from './queue';
+import { initQueues, issueTicket, callNext, resetQueue, getQueueStatus, estimatedWaitSeconds, getQueue } from './queue';
 import { createExpressApp, startHttpServer } from './server';
 import { createWindows, openAssignmentWizard } from './display-manager';
 import { startScheduler, stopScheduler } from './scheduler';
@@ -106,9 +106,14 @@ async function main(): Promise<void> {
     }
   });
 
-  ipcMain.handle('check-order', async (_event, { orderCheckUrl, orderNumber }: { orderCheckUrl: string; orderNumber: string }) => {
+  ipcMain.handle('check-order', async (_event, { queueId, orderNumber }: { queueId: number; orderNumber: string }) => {
     const { checkOrder } = await import('./order-check');
-    return checkOrder(orderCheckUrl, orderNumber);
+    const queue = getQueue(queueId);
+    if (!queue?.orderCheckUrl) {
+      logError(`check-order IPC: no orderCheckUrl for queue ${queueId}`);
+      return 'error';
+    }
+    return checkOrder(queue.orderCheckUrl, orderNumber);
   });
 
   // ── Cleanup ───────────────────────────────────────────────────────────────

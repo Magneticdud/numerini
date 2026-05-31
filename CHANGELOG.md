@@ -3,6 +3,17 @@
 All notable changes to Numerini are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.2.0.1] - 2026-05-31
+
+### Fixed
+
+- **Order-check SSRF** — the `/api/check-order` endpoint and IPC handler no longer accept a caller-supplied URL. The outbound fetch URL is now resolved server-side from the queue's admin-configured record, eliminating the server-side request forgery vector (GitHub CodeQL alert #1, CWE-918).
+- **Kiosk confirmation screen after order-check failure** — when the order-check service is unreachable, the kiosk now shows an advisory ("Verifica non disponibile. Il ticket è comunque valido.") instead of silently issuing a ticket with no indication of the problem.
+- **Kiosk deadlock on slow IPC** — the "Checking…" spinner now has a 10-second timeout. If the IPC call stalls, the kiosk returns to the idle screen instead of freezing forever. A race condition where a ticket could be committed after the timeout fired but before the screen transitioned has also been closed.
+- **Falsy queue-ID guard** — `/api/check-order` and `/api/issue` now correctly reject `null`/`undefined` queue IDs without accidentally rejecting a hypothetical ID of `0`.
+- **Unhandled upstream error in `/api/check-order`** — a fetch failure in the order-check service now returns HTTP 500 instead of crashing the request handler.
+- **Silent IPC error** — the `check-order` IPC handler now logs when a queue has no configured order-check URL, making misconfiguration visible in the app log.
+
 ## [0.2.0.0] - 2026-05-31
 
 ### Added

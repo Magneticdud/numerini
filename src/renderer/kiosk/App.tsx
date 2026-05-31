@@ -12,7 +12,7 @@ declare global {
       issueTicket: (queueId: number) => Promise<{ ok: boolean; ticket?: any; error?: string }>;
       callNext: (queueId: number) => Promise<{ ok: boolean; number?: number; error?: string }>;
       resetQueue: (queueId: number) => Promise<{ ok: boolean }>;
-      checkOrder: (url: string, num: string) => Promise<'ready' | 'not_ready' | 'error'>;
+      checkOrder: (queueId: number, num: string) => Promise<'ready' | 'not_ready' | 'error'>;
       wizardComplete: (result: any) => void;
       onEvent: (cb: (event: any) => void) => () => void;
       onWizardMode: (cb: (data: any) => void) => void;
@@ -23,7 +23,7 @@ declare global {
 type Screen =
   | { name: 'idle' }
   | { name: 'queue-select' }
-  | { name: 'numpad'; queueId: number; orderCheckUrl: string }
+  | { name: 'numpad'; queueId: number }
   | { name: 'checking' }
   | { name: 'confirm'; ticketNumber: number; queueName: string; advisory?: string }
   | { name: 'error'; message: string };
@@ -54,7 +54,7 @@ export default function App() {
 
   const handleQueueTap = useCallback(async (queue: any) => {
     if (queue.type === 'order_pickup' && queue.orderCheckUrl) {
-      setScreen({ name: 'numpad', queueId: queue.id, orderCheckUrl: queue.orderCheckUrl });
+      setScreen({ name: 'numpad', queueId: queue.id });
       return;
     }
     await doIssueTicket(queue.id, queue.name);
@@ -74,14 +74,25 @@ export default function App() {
     }
   };
 
-  const handleNumpadConfirm = async (queueId: number, orderCheckUrl: string, queueName: string, orderNumber: string) => {
+  const CHECKING_TIMEOUT_MS = 10_000;
+
+  const handleNumpadConfirm = async (queueId: number, queueName: string, orderNumber: string) => {
     setScreen({ name: 'checking' });
-    const result = await window.numerini.checkOrder(orderCheckUrl, orderNumber);
-    // Always issue the ticket — result only affects the message
-    const advisory = result === 'not_ready'
-      ? 'Il sistema non ha ancora aggiornato il tuo ordine. Verifica al bancone.'
-      : undefined;
-    await doIssueTicket(queueId, queueName, advisory);
+    let cancelled = false;
+    const timeoutId = setTimeout(() => { cancelled = true; goIdle(); }, CHECKING_TIMEOUT_MS);
+    try {
+      const result = await window.numerini.checkOrder(queueId, orderNumber);
+      if (cancelled) return;
+      clearTimeout(timeoutId); // clear before issuing — prevents timer firing mid-commit
+      const advisory =
+        result === 'not_ready' ? 'Il sistema non ha ancora aggiornato il tuo ordine. Verifica al bancone.' :
+        result === 'error'     ? "Verifica dell'ordine non disponibile. Il ticket è comunque valido." :
+        undefined;
+      await doIssueTicket(queueId, queueName, advisory);
+    } catch {
+      clearTimeout(timeoutId);
+      if (!cancelled) goIdle();
+    }
   };
 
   const queueName = (id: number) => queues.find(q => q.id === id)?.name ?? '';
@@ -104,7 +115,7 @@ export default function App() {
     return (
       <OrderNumpad
         queueName={queueName(screen.queueId)}
-        onConfirm={(num) => handleNumpadConfirm(screen.queueId, screen.orderCheckUrl, queueName(screen.queueId), num)}
+        onConfirm={(num) => handleNumpadConfirm(screen.queueId, queueName(screen.queueId), num)}
         onBack={() => setScreen({ name: 'queue-select' })}
       />
     );

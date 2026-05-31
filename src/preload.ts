@@ -8,8 +8,8 @@ contextBridge.exposeInMainWorld('numerini', {
   issueTicket:  (queueId: number) => ipcRenderer.invoke('issue-ticket', queueId),
   callNext:     (queueId: number) => ipcRenderer.invoke('call-next', queueId),
   resetQueue:   (queueId: number) => ipcRenderer.invoke('reset-queue', queueId),
-  checkOrder:   (orderCheckUrl: string, orderNumber: string) =>
-    ipcRenderer.invoke('check-order', { orderCheckUrl, orderNumber }),
+  checkOrder:   (queueId: number, orderNumber: string) =>
+    ipcRenderer.invoke('check-order', { queueId, orderNumber }),
   wizardComplete: (result: { kioskDisplayId: number; displayDisplayId: number | null }) =>
     ipcRenderer.send('wizard-complete', result),
   onEvent: (callback: (event: any) => void) => {
