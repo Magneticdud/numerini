@@ -38,6 +38,14 @@ npm run build
 npm start
 ```
 
+## Eseguire i test
+
+```bash
+npm test
+```
+
+I test unitari coprono il motore delle code (`issueTicket`, `callNext`, `resetQueue`, `getTicketPosition`, `estimatedWaitSeconds`). Girano su un database SQLite in-memory — Electron non è necessario.
+
 Al primo avvio si apre la procedura guidata di configurazione: assegna i monitor, configura le code, imposta la stampante.
 
 ## Installazione come servizio kiosk

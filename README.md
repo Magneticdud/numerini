@@ -40,6 +40,14 @@ npm run build
 npm start
 ```
 
+## Running tests
+
+```bash
+npm test
+```
+
+Unit tests cover the queue engine (`issueTicket`, `callNext`, `resetQueue`, `getTicketPosition`, `estimatedWaitSeconds`). They run against an in-memory SQLite database — no Electron required.
+
 ## Install as kiosk service
 
 ```bash
